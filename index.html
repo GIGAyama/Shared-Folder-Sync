@@ -1,561 +1,166 @@
 <!DOCTYPE html>
 <html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ファイル自動転送システム</title>
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&family=Noto+Serif+JP:wght@400;700&display=swap" rel="stylesheet">
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            'stationery-paper': '#fcfaf2',
-            'stationery-sage': '#8fae91',
-            'stationery-blue': '#708090',
-            'stationery-terracotta': '#c66b5d',
-            'stationery-gray': '#e5e7eb',
-          },
-          fontFamily: {
-            rounded: ['"M PLUS Rounded 1c"', 'sans-serif'],
-            serif: ['"Noto Serif JP"', 'serif'],
-          }
-        }
-      }
-    }
-  </script>
-  <style>
-    body {
-      background-color: #f3f4f6;
-      background-image: radial-gradient(#d1d5db 1px, transparent 1px);
-      background-size: 20px 20px; /* ドット方眼 */
-    }
-    .custom-shadow {
-      box-shadow: 4px 4px 0px 0px rgba(112, 128, 144, 0.2);
-    }
-    .loading-spinner {
-      border-top-color: #8fae91;
-      animation: spinner 0.6s linear infinite;
-    }
-    @keyframes spinner {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    /* 付箋風スタイル */
-    .sticky-note {
-      background-color: #fef3c7;
-      box-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-      transform: rotate(-1deg);
-    }
-    /* クリップ風装飾 */
-    .clip-decoration {
-      position: absolute;
-      top: -15px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 40px;
-      height: 40px;
-      background-color: #a0aec0;
-      border-radius: 20px;
-      z-index: 20;
-    }
-  </style>
-</head>
-<body class="font-rounded text-slate-700 min-h-screen">
-  <div id="root"></div>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>共有フォルダ同期くん</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <?!= HtmlService.createHtmlOutputFromFile('css').getContent(); ?>
+  </head>
+  <body>
+    <!-- ローディング画面 -->
+    <div id="loading-overlay">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">読み込み中...</div>
+    </div>
 
-  <!-- React & Babel -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
-
-  <script type="text/babel">
-    const { useState, useEffect, useCallback } = React;
-
-    // --- Mock for Development ---
-    if (typeof google === 'undefined') {
-      window.google = {
-        script: {
-          run: {
-            withSuccessHandler: function(onSuccess) {
-              this.onSuccess = onSuccess;
-              return this;
-            },
-            withFailureHandler: function(onFailure) {
-              this.onFailure = onFailure;
-              return this;
-            },
-            getAppConfig: function() {
-              setTimeout(() => {
-                if (this.onSuccess) this.onSuccess({
-                  folderPairs: [
-                    {source: 'src-1', target: 'tgt-1'}, 
-                    {source: '', target: ''}
-                  ],
-                  isAutoSyncEnabled: false,
-                  syncFrequency: 'hourly'
-                });
-              }, 800);
-            },
-            getSyncLogs: function() {
-              setTimeout(() => {
-                if (this.onSuccess) this.onSuccess([]);
-              }, 600);
-            },
-            saveAppConfig: function(config) {
-               setTimeout(() => {
-                console.log("Config Saved (Mock):", config);
-                if (this.onSuccess) this.onSuccess({ success: true });
-              }, 1000);
-            },
-            runSyncProcess: function() {
-              setTimeout(() => {
-                if (this.onSuccess) this.onSuccess({ success: true, message: '【UI確認モード】実際の転送は行われませんでした。' });
-              }, 2000);
-            },
-            toggleAutoSync: function(enable, frequency) {
-              setTimeout(() => {
-                if (this.onSuccess) this.onSuccess({ enabled: enable, frequency: frequency, message: `自動転送を${enable ? 'ON' : 'OFF'} (${frequency}) にしました（Mock）` });
-              }, 1000);
-            }
-          }
-        }
-      };
-    }
-
-    // --- Components ---
-
-    const Toast = ({ message, type, onClose }) => (
-      <div className={`fixed bottom-5 right-5 px-6 py-3 rounded-lg shadow-lg text-white z-50 flex items-center gap-2 transform transition-all duration-300 ${type === 'error' ? 'bg-stationery-terracotta' : 'bg-stationery-sage'}`}>
-        <span>{message}</span>
-        <button onClick={onClose} className="ml-2 font-bold hover:text-gray-200">×</button>
-      </div>
-    );
-
-    const Modal = ({ isOpen, title, children, onConfirm, onCancel, confirmText = "実行する", cancelText = "やめる" }) => {
-      if (!isOpen) return null;
-      return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40 p-4">
-          <div className="bg-stationery-paper w-full max-w-md rounded-xl p-8 border-2 border-stationery-blue custom-shadow relative">
-            <h3 className="text-xl font-bold mb-4 text-stationery-blue flex items-center gap-2">
-              <span className="text-2xl">📤</span> {title}
-            </h3>
-            <div className="mb-8 font-serif text-lg leading-relaxed">{children}</div>
-            <div className="flex justify-end gap-4">
-              <button onClick={onCancel} className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 transition-colors font-bold text-sm text-gray-600">{cancelText}</button>
-              <button onClick={onConfirm} className="px-4 py-2 rounded-lg bg-stationery-terracotta text-white hover:opacity-90 transition-opacity font-bold text-sm shadow-md">{confirmText}</button>
+    <!-- 進捗表示モーダル (新機能) -->
+    <div class="modal fade" id="progress-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+          <div class="modal-body text-center p-5">
+            <h4 class="mb-4 fw-bold text-primary">
+              <i class="bi bi-arrow-repeat spin-icon me-2"></i>処理しています...
+            </h4>
+            <div class="progress-custom mb-3">
+              <div id="sync-progress-bar" class="progress-bar-custom" style="width: 0%">0%</div>
             </div>
+            <p id="sync-progress-text" class="text-muted small mb-0">準備中...</p>
           </div>
         </div>
-      );
-    };
-
-    const LoadingOverlay = () => (
-      <div className="fixed inset-0 bg-white/70 backdrop-blur-sm flex flex-col items-center justify-center z-[100]">
-        <div className="loading-spinner w-12 h-12 border-4 border-stationery-gray rounded-full mb-4"></div>
-        <p className="text-stationery-blue font-bold animate-pulse">データを処理中...</p>
       </div>
-    );
+    </div>
 
-    const SyncLogItem = ({ log }) => {
-      const date = new Date(log.date);
-      const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-      
-      let icon = '📄';
-      let colorClass = 'text-gray-600';
-      if (log.type === 'CREATE') { icon = '🆕'; colorClass = 'text-stationery-sage font-bold'; }
-      if (log.type === 'UPDATE') { icon = '🔄'; colorClass = 'text-stationery-terracotta font-bold'; }
-      if (log.type === 'ERROR')  { icon = '⚠️'; colorClass = 'text-red-600 font-bold'; }
+    <!-- ヘッダー -->
+    <nav class="navbar sticky-top navbar-light bg-white shadow-sm">
+      <div class="container-fluid px-md-4">
+        <span class="navbar-brand mb-0 h1 fw-bold text-primary d-flex align-items-center">
+          <i class="bi bi-folder2-open me-2 fs-3"></i>
+          <span>共有フォルダ同期くん</span>
+        </span>
+        <div class="text-muted small">
+          <span class="d-none d-md-inline me-2">Ver 2.0</span>
+          <i class="bi bi-gear-fill text-secondary" style="cursor: pointer;" onclick="Swal.fire('バージョン情報', '共有フォルダ同期くん Ver 2.0<br>GIGA山 Model', 'info')"></i>
+        </div>
+      </div>
+    </nav>
 
-      return (
-        <li className="flex items-start gap-3 py-3 border-b border-dashed border-gray-300 last:border-0 group hover:bg-gray-50 transition-colors px-2 rounded">
-          <span className="text-xs text-gray-400 whitespace-nowrap mt-1 font-mono">{dateStr}</span>
-          <div className="flex-1">
-            <div className={`flex items-center gap-2 ${colorClass} text-sm`}>
-              <span>{icon}</span>
-              <span>{log.type === 'CREATE' ? '新規転送' : log.type === 'UPDATE' ? '更新・上書き' : 'エラー'}</span>
-            </div>
-            <p className="text-base font-serif mt-1 text-gray-800">{log.fileName}</p>
-            {log.message && <p className="text-xs text-gray-500 mt-1">{log.message}</p>}
-          </div>
-        </li>
-      );
-    };
-
-    // --- Main App ---
-
-    function App() {
-      const [isLoading, setIsLoading] = useState(false);
-      const [toast, setToast] = useState(null);
-      const [view, setView] = useState('user'); 
-      const [isModalOpen, setIsModalOpen] = useState(false);
-      
-      // Data
-      const [config, setConfig] = useState({ 
-        folderPairs: [], // [{source: '', target: ''}]
-        isAutoSyncEnabled: false,
-        syncFrequency: 'hourly'
-      });
-      const [syncLogs, setSyncLogs] = useState([]);
-
-      useEffect(() => {
-        loadData();
-        const timer = setInterval(() => {
-          google.script.run
-            .withSuccessHandler((logs) => {
-              setSyncLogs(logs);
-            })
-            .withFailureHandler(err => console.error("Polling error:", err))
-            .getSyncLogs();
-        }, 30000);
-        return () => clearInterval(timer);
-      }, []);
-
-      const showToast = (message, type = 'success') => {
-        setToast({ message, type });
-        setTimeout(() => setToast(null), 3000);
-      };
-
-      const loadData = () => {
-        setIsLoading(true);
-        const pConfig = new Promise((resolve, reject) => {
-          google.script.run.withSuccessHandler(resolve).withFailureHandler(reject).getAppConfig();
-        });
-        const pLogs = new Promise((resolve, reject) => {
-          google.script.run.withSuccessHandler(resolve).withFailureHandler(reject).getSyncLogs();
-        });
-
-        Promise.all([pConfig, pLogs])
-          .then(([conf, logs]) => {
-            // データ構造の正規化
-            let pairs = conf.folderPairs || [];
-            if (pairs.length === 0) pairs = [{source: '', target: ''}]; // 初期1件
-
-            setConfig({
-              ...conf,
-              folderPairs: pairs
-            });
-            setSyncLogs(logs);
-          })
-          .catch(err => {
-            console.error(err);
-            showToast("データの取得に失敗しました: " + err.message, "error");
-          })
-          .finally(() => {
-            setIsLoading(false);
-          });
-      };
-
-      const handleSync = () => {
-        setIsModalOpen(false);
-        setIsLoading(true);
-        google.script.run
-          .withSuccessHandler((res) => {
-            setIsLoading(false);
-            showToast(res.message);
-            loadData();
-          })
-          .withFailureHandler((err) => {
-            setIsLoading(false);
-            showToast("転送エラー: " + err.message, "error");
-          })
-          .runSyncProcess();
-      };
-
-      const saveConfig = () => {
-        setIsLoading(true);
-        // 空の設定を除去して保存
-        const cleanPairs = config.folderPairs.filter(p => p.source.trim() !== '' || p.target.trim() !== '');
+    <!-- メインコンテンツ -->
+    <div class="container py-4">
+      <div class="row g-4">
         
-        // UI上も更新
-        const newConfig = { ...config, folderPairs: cleanPairs.length > 0 ? cleanPairs : [{source:'', target:''}] };
-        setConfig(newConfig);
-
-        google.script.run
-          .withSuccessHandler(() => {
-            setIsLoading(false);
-            showToast("設定を保存しました");
-          })
-          .withFailureHandler(err => {
-             setIsLoading(false);
-             showToast("保存エラー: " + err.message, "error");
-          })
-          .saveAppConfig(newConfig);
-      };
-
-      const toggleAutoSync = () => {
-        setIsLoading(true);
-        const newState = !config.isAutoSyncEnabled;
-        google.script.run
-          .withSuccessHandler((res) => {
-            setIsLoading(false);
-            setConfig(prev => ({ 
-              ...prev, 
-              isAutoSyncEnabled: res.enabled,
-              syncFrequency: res.frequency 
-            }));
-            showToast(res.message);
-          })
-          .withFailureHandler(err => {
-             setIsLoading(false);
-             showToast("設定変更に失敗: " + err.message, "error");
-          })
-          .toggleAutoSync(newState, config.syncFrequency);
-      };
-
-      // Folder Pair Handlers
-      const addPair = () => {
-        if (config.folderPairs.length >= 5) {
-          showToast("設定できるのは5件までです", "error");
-          return;
-        }
-        setConfig({
-          ...config,
-          folderPairs: [...config.folderPairs, {source: '', target: ''}]
-        });
-      };
-
-      const removePair = (index) => {
-        const newPairs = config.folderPairs.filter((_, i) => i !== index);
-        // 全削除はできないように（最低1件）
-        if (newPairs.length === 0) newPairs.push({source: '', target: ''});
-        setConfig({ ...config, folderPairs: newPairs });
-      };
-
-      const updatePair = (index, field, value) => {
-        const newPairs = [...config.folderPairs];
-        newPairs[index] = { ...newPairs[index], [field]: value };
-        setConfig({ ...config, folderPairs: newPairs });
-      };
-
-      // Helper
-      const getFrequencyText = (freq) => {
-        if (freq === 'daily') return '毎日 (深夜)';
-        if (freq === 'weekly') return '毎週 (月曜)';
-        return '1時間ごと';
-      };
-
-      // --- Render Views ---
-
-      const renderUserView = () => (
-        <div className="space-y-6 animate-fade-in">
-          <div className="bg-stationery-paper border-2 border-stationery-blue rounded-xl p-6 custom-shadow relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
-              <i data-lucide="folder-output" className="w-32 h-32"></i>
-            </div>
-            
-            <div className="flex items-center gap-3 mb-6 relative z-10">
-              <div className="bg-stationery-sage text-white p-2 rounded-lg shadow-sm">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"/><polyline points="14 2 14 8 20 8"/><path d="M2 15h10"/><path d="m9 18 3-3-3-3"/></svg>
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-stationery-blue">ファイル転送ログ</h2>
-                <p className="text-xs text-gray-500">転送履歴（最新50件）</p>
-              </div>
-            </div>
-
-            <div className="font-serif bg-white p-4 rounded-lg border border-gray-200 shadow-inner h-72 overflow-y-auto">
-              {syncLogs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                  <span className="text-4xl mb-2">📭</span>
-                  <p>まだ転送されたファイルはありません</p>
-                </div>
-              ) : (
-                <ul className="space-y-1">
-                  {syncLogs.map((log, i) => <SyncLogItem key={i} log={log} />)}
-                </ul>
-              )}
-            </div>
-            
-            <div className="mt-4 flex justify-between items-center text-sm text-gray-500 border-t border-gray-200 pt-2">
-              <span>ステータス: {config.isAutoSyncEnabled ? `自動転送 ON (${getFrequencyText(config.syncFrequency)})` : '手動転送モード'}</span>
-              <span>最終確認: {new Date().toLocaleTimeString()}</span>
-            </div>
-          </div>
+        <!-- 左カラム：操作パネル -->
+        <div class="col-lg-7">
           
-          {/* 説明書き */}
-          <div className="text-center text-xs text-gray-400 mt-8">
-            <p>※複数のフォルダペアを設定している場合、すべてのペアが順番に処理されます。</p>
-          </div>
-        </div>
-      );
-
-      const renderAdminView = () => {
-        // パスワード認証ブロックを削除しました
-
-        return (
-          <div className="space-y-8 animate-fade-in">
-            {/* Folder Settings List */}
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-              <h3 className="font-bold text-lg mb-4 flex items-center justify-between text-stationery-blue border-b pb-2">
-                <span className="flex items-center gap-2"><span>⚙️</span> 転送フォルダ設定 ({config.folderPairs.length}/5)</span>
-                <button 
-                  onClick={addPair}
-                  disabled={config.folderPairs.length >= 5}
-                  className="text-xs bg-stationery-sage text-white px-3 py-1 rounded hover:opacity-80 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                >
-                  ＋ ペアを追加
+          <!-- 実行ボタンエリア -->
+          <div class="card mb-4 border-primary border-2">
+            <div class="card-body text-center py-4">
+              <h5 class="card-title fw-bold text-primary mb-3">
+                <i class="bi bi-rocket-takeoff-fill me-2"></i>今すぐ配る
+              </h5>
+              <div class="d-grid gap-2 col-10 mx-auto">
+                <!-- 本番実行ボタン -->
+                <button class="btn btn-primary btn-lg shadow-sm" onclick="runSyncManual(false)">
+                  <i class="bi bi-send-fill me-2"></i>ファイルを転送する
                 </button>
-              </h3>
-              
-              <div className="space-y-6">
-                {config.folderPairs.map((pair, index) => (
-                  <div key={index} className="relative bg-gray-50 p-4 rounded-lg border border-gray-200 group hover:border-stationery-blue/50 transition-colors">
-                    <div className="absolute -top-3 left-3 bg-white px-2 text-xs font-bold text-gray-400 border rounded">
-                      設定 #{index + 1}
-                    </div>
-                    {config.folderPairs.length > 1 && (
-                      <button 
-                        onClick={() => removePair(index)}
-                        className="absolute top-2 right-2 text-gray-400 hover:text-red-500"
-                        title="この設定を削除"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                      </button>
-                    )}
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1 flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-gray-400"></span> 元 (Source) ID
-                        </label>
-                        <input 
-                          type="text" 
-                          value={pair.source}
-                          onChange={(e) => updatePair(index, 'source', e.target.value)}
-                          className="w-full p-2 border rounded bg-white font-mono text-sm focus:ring-1 focus:ring-stationery-sage outline-none"
-                          placeholder="転送元フォルダID"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1 flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-stationery-terracotta"></span> 先 (Target) ID
-                        </label>
-                        <input 
-                          type="text" 
-                          value={pair.target}
-                          onChange={(e) => updatePair(index, 'target', e.target.value)}
-                          className="w-full p-2 border rounded bg-white font-mono text-sm focus:ring-1 focus:ring-stationery-terracotta outline-none"
-                          placeholder="転送先フォルダID"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                <!-- テスト実行ボタン (新機能) -->
+                <button class="btn btn-warning text-white fw-bold shadow-sm" onclick="runSyncManual(true)">
+                  <i class="bi bi-bug-fill me-2"></i>テスト転送 (ログのみ)
+                </button>
+              </div>
+              <p class="card-text text-muted small mt-3 mb-0">
+                テスト転送はファイルをコピーせず、ログだけを表示します。
+              </p>
+            </div>
+          </div>
 
-                <div className="flex justify-end pt-2">
-                  <button onClick={saveConfig} className="bg-stationery-blue text-white px-6 py-2 rounded-lg hover:opacity-90 text-sm font-bold shadow-md">
-                    全設定を保存
+          <!-- 設定エリア -->
+          <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <h5 class="mb-0 fw-bold">
+                <i class="bi bi-sliders me-2 text-primary"></i>
+                転送設定
+              </h5>
+              <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="addPair()">
+                <i class="bi bi-plus-lg"></i> 追加
+              </button>
+            </div>
+            <div class="card-body">
+              <div class="alert alert-info d-flex align-items-center small py-2 mb-4" role="alert">
+                <i class="bi bi-info-circle-fill me-2"></i>
+                <div>GoogleドライブのURL末尾のIDを入力してください。<br>「名前」をつけると管理しやすくなります。</div>
+              </div>
+
+              <!-- JSで生成されるエリア -->
+              <div id="folder-settings-container"></div>
+
+              <div class="text-end mt-3">
+                <button class="btn btn-success px-4" onclick="saveSettings()">
+                  <i class="bi bi-save me-2"></i>設定を保存
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 自動モード設定 -->
+          <div class="card">
+            <div class="card-header">
+              <h5 class="mb-0 fw-bold">
+                <i class="bi bi-clock-history me-2 text-primary"></i>
+                自動モード
+              </h5>
+            </div>
+            <div class="card-body">
+              <div class="row align-items-end g-3">
+                <div class="col-md-6">
+                  <label class="form-label small text-muted">頻度</label>
+                  <select class="form-select" id="sync-frequency">
+                    <option value="hourly">1時間ごと</option>
+                    <option value="daily">毎日（深夜0時）</option>
+                    <option value="weekly">毎週（月曜 朝8時）</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <div class="mb-2 small text-end" id="auto-sync-status"></div>
+                  <button id="btn-auto-sync" class="btn btn-secondary w-100" onclick="toggleAutoSync()">
+                    読み込み中...
                   </button>
                 </div>
               </div>
             </div>
-
-            {/* Actions */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-stationery-sage/10 rounded-xl p-6 border border-stationery-sage/30">
-                <h3 className="font-bold text-stationery-sage mb-2 flex items-center gap-2">
-                  <i data-lucide="play-circle" className="w-5 h-5"></i> 手動転送
-                </h3>
-                <p className="text-sm text-gray-600 mb-4 h-10">設定されたすべてのフォルダペアで同期を実行します。</p>
-                <button 
-                  onClick={() => setIsModalOpen(true)}
-                  className="w-full bg-stationery-sage text-white py-3 rounded-lg font-bold shadow-md hover:translate-y-0.5 transition-transform"
-                >
-                  一括転送を実行
-                </button>
-              </div>
-
-              <div className="bg-stationery-terracotta/10 rounded-xl p-6 border border-stationery-terracotta/30 relative">
-                <h3 className="font-bold text-stationery-terracotta mb-2 flex items-center gap-2">
-                  <i data-lucide="clock" className="w-5 h-5"></i> 自動転送設定
-                </h3>
-                
-                <div className="mb-4">
-                   <p className="text-sm text-gray-600 mb-2">更新頻度を選択:</p>
-                   <select 
-                     value={config.syncFrequency} 
-                     onChange={(e) => setConfig({...config, syncFrequency: e.target.value})}
-                     className="w-full p-2 border border-gray-300 rounded bg-white text-sm focus:ring-2 focus:ring-stationery-terracotta outline-none"
-                     disabled={config.isAutoSyncEnabled} 
-                   >
-                     <option value="hourly">1時間ごと</option>
-                     <option value="daily">毎日（深夜）</option>
-                     <option value="weekly">毎週（月曜 朝）</option>
-                   </select>
-                   {config.isAutoSyncEnabled && <p className="text-xs text-gray-400 mt-1">※変更するには一度停止してください</p>}
-                </div>
-
-                <p className="text-sm text-gray-600 mb-4">
-                  状態: <span className={`font-bold ${config.isAutoSyncEnabled ? 'text-green-600' : 'text-gray-500'}`}>
-                    {config.isAutoSyncEnabled ? '稼働中' : '停止中'}
-                  </span>
-                </p>
-
-                <button 
-                  onClick={toggleAutoSync}
-                  className={`w-full py-3 rounded-lg font-bold shadow-md transition-colors ${config.isAutoSyncEnabled ? 'bg-white text-stationery-terracotta border border-stationery-terracotta' : 'bg-stationery-terracotta text-white'}`}
-                >
-                  {config.isAutoSyncEnabled ? '自動転送を停止する' : 'この頻度で開始する'}
-                </button>
-              </div>
-            </div>
           </div>
-        );
-      };
+        </div>
 
-      return (
-        <div className="max-w-4xl mx-auto p-4 md:p-8 pb-20">
-          {isLoading && <LoadingOverlay />}
-          {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-          
-          <Modal 
-            isOpen={isModalOpen} 
-            title="手動転送を実行しますか？" 
-            onConfirm={handleSync} 
-            onCancel={() => setIsModalOpen(false)}
-          >
-            <p>設定されたすべてのフォルダペア ({config.folderPairs.filter(p => p.source && p.target).length}件) に対して転送処理を行います。</p>
-            <div className="mt-4 bg-yellow-50 p-4 rounded border border-yellow-200 text-sm">
-              <p className="font-bold text-yellow-800 mb-1">⚠️ 確認事項</p>
-              <ul className="list-disc list-inside text-yellow-700">
-                <li>共有フォルダ内の同名ファイルは<strong>上書き</strong>されます。</li>
-                <li>件数が多いと時間がかかる場合があります。</li>
+        <!-- 右カラム：ログ -->
+        <div class="col-lg-5">
+          <div class="card h-100">
+            <div class="card-header bg-white">
+              <h5 class="mb-0 fw-bold">
+                <i class="bi bi-journal-text me-2 text-primary"></i>
+                活動記録
+              </h5>
+            </div>
+            <div class="card-body p-0">
+              <ul class="log-list list-unstyled m-0" id="log-list">
+                <li class="p-4 text-center text-muted">読み込み中...</li>
               </ul>
             </div>
-          </Modal>
-
-          <header className="flex flex-col md:flex-row justify-between items-center mb-8 border-b-2 border-stationery-blue pb-4 gap-4">
-            <div className="text-center md:text-left">
-              <h1 className="text-2xl md:text-3xl font-bold text-stationery-blue flex items-center justify-center md:justify-start gap-2">
-                <span className="text-4xl">🖇️</span> ファイル自動転送システム
-              </h1>
-              <p className="text-sm text-gray-500 mt-1 font-serif">原本 ➔ 共有フォルダへのファイル配布・同期</p>
+            <div class="card-footer bg-light text-center small text-muted border-top-0 rounded-bottom-4">
+              最新の50件を表示しています
             </div>
-            <button 
-              onClick={() => setView(view === 'user' ? 'admin' : 'user')}
-              className="px-4 py-2 bg-stationery-gray rounded-full hover:bg-gray-300 transition-colors text-sm font-bold flex items-center gap-2"
-            >
-              {view === 'user' ? '⚙️ 設定画面へ' : '👤 ログ画面へ'}
-            </button>
-          </header>
-
-          <main>
-            {view === 'user' ? renderUserView() : renderAdminView()}
-          </main>
+          </div>
         </div>
-      );
-    }
+      </div>
+    </div>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-  </script>
-</body>
+    <!-- フッター -->
+    <footer class="text-center text-muted py-3 mt-4 border-top">
+      <small>© 2026 共有フォルダ同期くん <a href="https://note.com/cute_borage86" target="_blank" class="text-decoration-none text-muted">GIGA山</a></small>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <?!= HtmlService.createHtmlOutputFromFile('js').getContent(); ?>
+  </body>
 </html>
