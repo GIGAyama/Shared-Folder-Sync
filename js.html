@@ -1,0 +1,338 @@
+<script src="//cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+  /**
+   * 共有フォルダ同期くん - Client Side Logic (Ver 2.0)
+   * プログレスバー、テストモード対応版
+   */
+
+  window.addEventListener('load', function() {
+    loadData();
+  });
+
+  let currentConfig = {
+    folderPairs: [], // {source, target, label}
+    syncFrequency: 'hourly',
+    isAutoSyncEnabled: false
+  };
+
+  let progressInterval = null; // 進捗確認タイマー用
+
+  function loadData() {
+    showLoading(true);
+    google.script.run
+      .withSuccessHandler(function(config) {
+        currentConfig = config;
+        renderConfigUI();
+        loadLogs();
+      })
+      .withFailureHandler(function(error) {
+        showError('データの読み込みに失敗しました', error);
+        showLoading(false);
+      })
+      .getAppConfig();
+  }
+
+  function loadLogs() {
+    google.script.run
+      .withSuccessHandler(function(logs) {
+        renderLogsUI(logs);
+        showLoading(false);
+      })
+      .withFailureHandler(function(error) {
+        console.error(error);
+        showLoading(false);
+      })
+      .getSyncLogs();
+  }
+
+  // --- UI描画 ---
+
+  function renderConfigUI() {
+    const container = document.getElementById('folder-settings-container');
+    container.innerHTML = '';
+
+    if (!currentConfig.folderPairs || currentConfig.folderPairs.length === 0) {
+      currentConfig.folderPairs = [{source: '', target: '', label: ''}];
+    }
+
+    currentConfig.folderPairs.forEach((pair, index) => {
+      const html = `
+        <div class="card p-3 mb-3 bg-light border">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="d-flex align-items-center gap-2">
+               <span class="badge bg-secondary">設定 ${index + 1}</span>
+               <input type="text" class="form-control form-control-sm" 
+                 style="width: 200px;"
+                 value="${pair.label || ''}" 
+                 placeholder="例：3年1組の配布用"
+                 onchange="updatePair(${index}, 'label', this.value)">
+            </div>
+            ${currentConfig.folderPairs.length > 1 ? `
+              <button type="button" class="btn btn-sm btn-outline-danger rounded-pill" onclick="removePair(${index})">
+                <i class="bi bi-trash"></i> 削除
+              </button>` : ''}
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label small text-muted mb-1">
+                <ruby>元<rt>もと</rt></ruby>のフォルダID
+              </label>
+              <input type="text" class="form-control font-monospace bg-white" 
+                value="${pair.source}" 
+                placeholder="IDを貼り付けてね"
+                onchange="updatePair(${index}, 'source', this.value)">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted mb-1">
+                <ruby>先<rt>さき</rt></ruby>のフォルダID
+              </label>
+              <input type="text" class="form-control font-monospace bg-white" 
+                value="${pair.target}" 
+                placeholder="IDを貼り付けてね"
+                onchange="updatePair(${index}, 'target', this.value)">
+            </div>
+          </div>
+        </div>
+      `;
+      container.insertAdjacentHTML('beforeend', html);
+    });
+
+    updateAutoSyncButton();
+  }
+
+  function renderLogsUI(logs) {
+    const list = document.getElementById('log-list');
+    list.innerHTML = '';
+
+    if (logs.length === 0) {
+      list.innerHTML = '<li class="p-3 text-center text-muted">まだ履歴はありません</li>';
+      return;
+    }
+
+    logs.forEach(log => {
+      let badgeClass = 'bg-secondary';
+      // テストモードのログはオレンジ色にする
+      if (log.type.includes('テスト')) badgeClass = 'bg-warning text-dark';
+      else if (log.type.includes('新規')) badgeClass = 'bg-success';
+      else if (log.type.includes('更新')) badgeClass = 'bg-primary';
+      else if (log.type.includes('エラー')) badgeClass = 'bg-danger';
+
+      const html = `
+        <li class="log-item">
+          <div class="d-flex justify-content-between small text-muted mb-1">
+            <span>${log.date}</span>
+            <span class="badge ${badgeClass}">${log.type}</span>
+          </div>
+          <div class="fw-bold">${log.fileName}</div>
+          <div class="small text-muted">${log.message}</div>
+        </li>
+      `;
+      list.insertAdjacentHTML('beforeend', html);
+    });
+  }
+
+  function updateAutoSyncButton() {
+    const btn = document.getElementById('btn-auto-sync');
+    const statusText = document.getElementById('auto-sync-status');
+    const freqSelect = document.getElementById('sync-frequency');
+
+    freqSelect.value = currentConfig.syncFrequency;
+
+    if (currentConfig.isAutoSyncEnabled) {
+      btn.className = 'btn btn-danger w-100';
+      btn.innerHTML = '<i class="bi bi-stop-circle-fill me-2"></i>自動転送を<ruby>止<rt>と</rt></ruby>める';
+      statusText.innerHTML = '<span class="text-success fw-bold">● 動いています</span>';
+      freqSelect.disabled = true;
+    } else {
+      btn.className = 'btn btn-success w-100';
+      btn.innerHTML = '<i class="bi bi-play-circle-fill me-2"></i>自動転送を<ruby>始<rt>はじ</rt></ruby>める';
+      statusText.innerHTML = '<span class="text-secondary">○ 止まっています</span>';
+      freqSelect.disabled = false;
+    }
+  }
+
+  // --- 操作系 ---
+
+  function updatePair(index, key, value) {
+    currentConfig.folderPairs[index][key] = value.trim();
+  }
+
+  function addPair() {
+    if (currentConfig.folderPairs.length >= 5) {
+      Swal.fire('これ以上は増やせません', '一度に設定できるのは5つまでです', 'warning');
+      return;
+    }
+    currentConfig.folderPairs.push({source: '', target: '', label: ''});
+    renderConfigUI();
+  }
+
+  function removePair(index) {
+    currentConfig.folderPairs.splice(index, 1);
+    renderConfigUI();
+  }
+
+  function saveSettings() {
+    showLoading(true);
+    const cleanPairs = currentConfig.folderPairs.filter(p => p.source !== '' || p.target !== '');
+    const configToSave = {
+      folderPairs: cleanPairs,
+      syncFrequency: document.getElementById('sync-frequency').value
+    };
+
+    google.script.run
+      .withSuccessHandler(function() {
+        showLoading(false);
+        Swal.fire({
+          icon: 'success',
+          title: '保存しました！',
+          timer: 2000, showConfirmButton: false
+        });
+        loadData();
+      })
+      .withFailureHandler(function(error) {
+        showError('保存できませんでした', error);
+        showLoading(false);
+      })
+      .saveAppConfig(configToSave);
+  }
+
+  /**
+   * 同期実行（手動 or テスト）
+   */
+  function runSyncManual(isTestMode) {
+    const modeName = isTestMode ? 'テスト転送' : '本番転送';
+    const confirmText = isTestMode 
+      ? '実際にはファイルはコピーされません。<br>結果のログだけを表示します。' 
+      : '本当にファイルを配りますか？<br>共有フォルダ内の同名ファイルは<b>上書き</b>されます。';
+    const confirmIcon = isTestMode ? 'info' : 'warning';
+    const confirmButtonColor = isTestMode ? '#f9ab00' : '#1a73e8';
+
+    Swal.fire({
+      title: `${modeName}しますか？`,
+      html: confirmText,
+      icon: confirmIcon,
+      showCancelButton: true,
+      confirmButtonText: isTestMode ? 'テスト実行' : 'はい、配ります',
+      cancelButtonText: 'やめる',
+      confirmButtonColor: confirmButtonColor
+    }).then((result) => {
+      if (result.isConfirmed) {
+        executeSync(isTestMode);
+      }
+    });
+  }
+
+  function executeSync(isDryRun) {
+    // プログレスバーを表示するモードに切り替え
+    showProgressModal(true);
+
+    // ポーリング開始（1秒ごとに進捗を確認）
+    progressInterval = setInterval(checkProgress, 1000);
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        // 処理完了
+        clearInterval(progressInterval);
+        showProgressModal(false);
+
+        if (res.success) {
+          Swal.fire('完了！', res.message, 'success');
+          loadLogs();
+        } else {
+          Swal.fire('エラー', res.message, 'error');
+        }
+      })
+      .withFailureHandler(function(error) {
+        clearInterval(progressInterval);
+        showProgressModal(false);
+        showError('エラーが起きました', error);
+      })
+      .runSyncProcess(isDryRun);
+  }
+
+  /**
+   * サーバーに進捗状況を問い合わせる
+   */
+  function checkProgress() {
+    google.script.run
+      .withSuccessHandler(function(status) {
+        updateProgressUI(status);
+      })
+      .withFailureHandler(() => {}) // エラー時は無視して次を待つ
+      .getProgress();
+  }
+
+  function toggleAutoSync() {
+    const isCurrentlyEnabled = currentConfig.isAutoSyncEnabled;
+    const frequency = document.getElementById('sync-frequency').value;
+    
+    if (isCurrentlyEnabled) {
+      executeToggle(false, frequency);
+      return;
+    }
+
+    Swal.fire({
+      title: '自動モードにしますか？',
+      text: '指定した間隔で自動的に実行します。',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'はい', cancelButtonText: 'いいえ'
+    }).then((result) => {
+      if (result.isConfirmed) executeToggle(true, frequency);
+    });
+  }
+
+  function executeToggle(enable, frequency) {
+    showLoading(true);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        currentConfig.isAutoSyncEnabled = res.enabled;
+        currentConfig.syncFrequency = res.frequency;
+        updateAutoSyncButton();
+        showLoading(false);
+        Swal.fire({
+          icon: 'success', title: res.enabled ? '自動モードON' : 'OFF',
+          text: res.message, timer: 2000, showConfirmButton: false
+        });
+      })
+      .withFailureHandler(function(error) {
+        showError('設定変更失敗', error); showLoading(false);
+      })
+      .toggleAutoSync(enable, frequency);
+  }
+
+  // --- ユーティリティ ---
+
+  function showLoading(isLoading) {
+    const overlay = document.getElementById('loading-overlay');
+    overlay.style.display = isLoading ? 'flex' : 'none';
+  }
+
+  function showError(msg, err) {
+    console.error(err);
+    Swal.fire('エラー', `${msg}<br><small>${err.message}</small>`, 'error');
+  }
+
+  // プログレスバー用モーダル制御
+  function showProgressModal(show) {
+    const modal = document.getElementById('progress-modal');
+    if (show) {
+      updateProgressUI({percent: 0, status: '準備中...'});
+      const bsModal = new bootstrap.Modal(modal, {backdrop: 'static', keyboard: false});
+      bsModal.show();
+    } else {
+      const bsModal = bootstrap.Modal.getInstance(modal);
+      if (bsModal) bsModal.hide();
+    }
+  }
+
+  function updateProgressUI(status) {
+    const bar = document.getElementById('sync-progress-bar');
+    const text = document.getElementById('sync-progress-text');
+    if(bar && text) {
+      bar.style.width = `${status.percent}%`;
+      bar.innerText = `${status.percent}%`;
+      text.innerText = status.status;
+    }
+  }
+</script>
