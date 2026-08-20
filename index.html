@@ -129,6 +129,25 @@
                   </button>
                 </div>
               </div>
+
+              <!-- 無人での上書きを止める安全装置。既定はON。 -->
+              <div class="form-check mt-3 pt-3 border-top">
+                <input class="form-check-input" type="checkbox" id="auto-no-overwrite" checked
+                  onchange="saveAutoOverwriteOption()">
+                <label class="form-check-label" for="auto-no-overwrite">
+                  <span class="fw-bold">自動のときは<ruby>上書<rt>うわが</rt></ruby>きしない</span>
+                  <span class="badge bg-success ms-1">おすすめ</span>
+                </label>
+                <div class="form-text">
+                  ONのあいだ、自動転送では<b>新しいファイルを配るだけ</b>になります。
+                  配布先にすでにある同じ名前のファイルには触りません。
+                  児童が書き込んだファイルが、気づかないうちに消えるのを防ぎます
+                  （見送ったものは「活動記録」に残ります）。<br>
+                  OFFにすると自動でも上書きしますが、そのときも元のファイルは消さず
+                  <code>_backup_日時</code> という名前に変えて残します。<br>
+                  「ファイルを転送する」を手で押したときは、これまでどおり上書きします。
+                </div>
+              </div>
             </div>
           </div>
         </div>

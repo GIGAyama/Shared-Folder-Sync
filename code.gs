@@ -11,10 +11,18 @@ const KEY_DB_SS_ID = 'DB_SS_ID';
 const CACHE_KEY_PROGRESS = 'SYNC_PROGRESS'; // 進捗状況を保存するキー
 
 function doGet() {
+  // ⚠️ ここは以前 XFrameOptionsMode.ALLOWALL にしていた。
+  //    ALLOWALL は「どのサイトからでも iframe で埋め込んでよい」という意味になる。
+  //    このアプリは配布先のファイルをゴミ箱に送れる。よそのサイトに透明な iframe で
+  //    重ねられ、先生が気づかないうちに「ファイルを転送する」を押させられると、
+  //    児童の書き込んだファイルが消える（クリックジャッキング）。
+  //    既定（DEFAULT）に戻すと、Google の画面の中でしか開けなくなる。
+  //    URL を直接開いて使う分には、これで何も変わらない。
+  //    Google サイトなどに貼り付けて使いたくなったときだけ、ここを見直すこと。
   return HtmlService.createTemplateFromFile('index').evaluate()
     .setTitle(APP_TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT)
     .setFaviconUrl('https://drive.google.com/uc?id=148q8_lJ6rxjyzMTenibABY2zM-nILoAH&.png');
 }
 
@@ -47,6 +55,9 @@ function getOrCreateDb() {
     configSheet.getRange(1, 1, 1, 2).setFontWeight('bold').setBackground('#e9ecef');
     configSheet.appendRow(['folderPairs', '[]']); 
     configSheet.appendRow(['syncFrequency', 'hourly']);
+    // 自動実行では既存ファイルに触らない、を既定にする。
+    // 名前が同じというだけで、児童が書き込んだファイルが無人で消えるのを防ぐため。
+    configSheet.appendRow(['autoSyncNoOverwrite', 'true']);
   }
 
   let logSheet = ss.getSheetByName(SHEET_NAME_LOGS);
@@ -89,6 +100,8 @@ function getAppConfig() {
   return { 
     folderPairs: folderPairs, 
     syncFrequency: config.syncFrequency || 'hourly',
+    // 設定が無いときは「上書きしない」。安全なほうを既定にする。
+    autoSyncNoOverwrite: String(config.autoSyncNoOverwrite) !== 'false',
     isAutoSyncEnabled: isAutoSyncEnabled 
   };
 }
@@ -107,6 +120,10 @@ function saveAppConfig(newConfig) {
   }
   if (newConfig.syncFrequency) {
     currentMap['syncFrequency'] = newConfig.syncFrequency;
+  }
+  // false も保存したいので、!== undefined で見る（if (値) だと false が素通りする）
+  if (newConfig.autoSyncNoOverwrite !== undefined) {
+    currentMap['autoSyncNoOverwrite'] = newConfig.autoSyncNoOverwrite ? 'true' : 'false';
   }
   
   configSheet.clearContents();
@@ -173,12 +190,65 @@ function getProgress() {
 // --- 4. コア機能（同期処理）大幅改修 ---
 
 /**
- * ファイル同期を実行するメイン関数
- * @param {boolean} isDryRun - trueの場合、実際の書き込みを行わない（テストモード）
+ * 配布先のファイルを、最後に更新した人の名前で言い表す。
+ *
+ * DriveApp には「最後に更新した人」を取る方法がない。
+ * 拡張サービス「Drive」を有効にしてあれば聞けるので、あれば使い、
+ * 無ければ所有者で代える。どちらも取れなければ「不明」と書く。
+ * ここで例外を出して同期そのものを止めてしまわないよう、全部 try で包む。
  */
-function runSyncProcess(isDryRun = false) {
-  // 自動実行(トリガー)からの呼び出しでは引数がないため、falseになる
+function describeLastEditor_(file) {
+  try {
+    if (typeof Drive !== 'undefined' && Drive.Files && Drive.Files.get) {
+      let meta = null;
+      // 拡張サービスの版によって返るものが違うので、両方見る
+      try { meta = Drive.Files.get(file.getId(), { fields: 'lastModifyingUser(displayName,emailAddress)' }); }
+      catch (e3) { meta = Drive.Files.get(file.getId()); }
+      const u = meta && meta.lastModifyingUser;
+      if (u && (u.displayName || u.emailAddress)) return u.displayName || u.emailAddress;
+      if (meta && meta.lastModifyingUserName) return meta.lastModifyingUserName;
+    }
+  } catch (e) { /* 拡張サービスが無効／権限が足りないときはここに来る */ }
+
+  try {
+    const owner = file.getOwner();
+    if (owner) return '所有者:' + owner.getEmail();
+  } catch (e2) { /* 共有ドライブのファイルには所有者がいない */ }
+
+  return '不明';
+}
+
+/** ログに書く日時。ファイル名にも使うので、記号を含めない形にする。 */
+function stampForName_(date) {
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyyMMdd-HHmm');
+}
+
+function stampForLog_(date) {
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm');
+}
+
+/**
+ * ファイル同期を実行するメイン関数
+ *
+ * ⚠️ 上書きは「名前が同じ」だけを見て配布先のファイルを消す処理である。
+ *    配布先は児童が書き込むフォルダなので、ワークシートに答えを書いた子の
+ *    ファイルが、毎時のトリガーで**誰にも聞かれずに**消えていた。
+ *    そこで、
+ *      ・自動実行では既定で既存ファイルに触らない（新規配布だけ行う）
+ *      ・自動実行で上書きする設定にしたときは、消さずに退避（改名）する
+ *      ・手動実行（確認ダイアログを通った操作）の動きは変えない。
+ *        ただし上書き前の更新日時と、最後に更新した人を必ずログに残す
+ *    とした。
+ *
+ * @param {boolean} isDryRun - trueの場合、実際の書き込みを行わない（テストモード）
+ * @param {boolean} isManual - 画面のボタンから呼ばれたときだけ true。
+ *                             時間主導トリガーはこの引数を渡さないので false になる。
+ */
+function runSyncProcess(isDryRun = false, isManual = false) {
+  // 自動実行(トリガー)からの呼び出しでは引数がイベントオブジェクトになるため、falseになる
   if (typeof isDryRun !== 'boolean') isDryRun = false;
+  // 画面からの呼び出しだけが true を渡す。トリガーからは絶対に true にならない。
+  const isManualRun = (isManual === true);
 
   const lock = LockService.getScriptLock();
   try {
@@ -195,11 +265,18 @@ function runSyncProcess(isDryRun = false) {
   
   const configData = configSheet.getDataRange().getValues();
   let folderPairs = [];
+  let noOverwriteSetting = true;   // 設定が無いときは安全なほう（上書きしない）
   for (let i = 1; i < configData.length; i++) {
     if (configData[i][0] === 'folderPairs') {
       try { folderPairs = JSON.parse(configData[i][1]); } catch(e) { folderPairs = []; }
     }
+    if (configData[i][0] === 'autoSyncNoOverwrite') {
+      noOverwriteSetting = String(configData[i][1]) !== 'false';
+    }
   }
+
+  // 自動実行のときだけ、この設定で上書きを止める。手動は今までどおり上書きする。
+  const skipOverwrite = !isManualRun && noOverwriteSetting;
 
   if (!folderPairs || folderPairs.length === 0) {
     lock.releaseLock();
@@ -210,6 +287,7 @@ function runSyncProcess(isDryRun = false) {
   const timestamp = new Date();
   let totalProcessed = 0;
   let totalErrors = 0;
+  let totalSkipped = 0;
   
   // 処理対象の総数（簡易的にペア数とする。ファイル数までは事前に分からないため）
   const totalSteps = folderPairs.length;
@@ -255,12 +333,41 @@ function runSyncProcess(isDryRun = false) {
 
           if (tFile) {
             if (sFile.getLastUpdated().getTime() > tFile.getLastUpdated().getTime()) {
-              if (!isDryRun) {
-                tFile.setTrashed(true);
-                sFile.makeCopy(sName, targetFolder);
+              if (skipOverwrite) {
+                // 自動実行では既存ファイルに触らない。
+                // 児童が書き込んだあとかもしれないので、消さずに「見送った」と記録する。
+                logs.push([timestamp, 'スキップ',
+                  `[${folderName}] 自動実行のため上書きしませんでした（配布先の更新: ${stampForLog_(tFile.getLastUpdated())} / 最後に更新した人: ${describeLastEditor_(tFile)}）`,
+                  sName]);
+                totalSkipped++;
+              } else {
+                // 上書きする前に、配布先が「いつ・誰に」更新されたものだったかを必ず残す。
+                // あとから「消えた」と言われたときに、これが無いと何も分からない。
+                const beforeUpdated = stampForLog_(tFile.getLastUpdated());
+                const beforeEditor = describeLastEditor_(tFile);
+                let howRetired = '';
+
+                if (!isDryRun) {
+                  if (isManualRun) {
+                    // 手動（確認ダイアログを通った操作）は今までどおりゴミ箱へ送る
+                    tFile.setTrashed(true);
+                    howRetired = 'ゴミ箱へ';
+                  } else {
+                    // 誰も見ていない自動実行では消さない。名前を変えて残しておく。
+                    const backupName = `${sName}_backup_${stampForName_(timestamp)}`;
+                    tFile.setName(backupName);
+                    howRetired = `退避: ${backupName}`;
+                  }
+                  sFile.makeCopy(sName, targetFolder);
+                } else {
+                  howRetired = isManualRun ? 'ゴミ箱へ（予定）' : '退避（予定）';
+                }
+
+                logs.push([timestamp, logTypeUpdate,
+                  `${logPrefix}[${folderName}] 上書き対象（${howRetired} / 上書き前の更新: ${beforeUpdated} / 最後に更新した人: ${beforeEditor}）`,
+                  sName]);
+                totalProcessed++;
               }
-              logs.push([timestamp, logTypeUpdate, `${logPrefix}[${folderName}] 上書き対象`, sName]);
-              totalProcessed++;
             }
           } else {
             if (!isDryRun) {
@@ -291,9 +398,12 @@ function runSyncProcess(isDryRun = false) {
   cache.put(CACHE_KEY_PROGRESS, JSON.stringify({ percent: 100, status: '完了！' }), 1800);
   lock.releaseLock();
 
+  const skipNote = totalSkipped > 0
+    ? ` ／ 自動実行のため上書きしなかったもの: ${totalSkipped}件`
+    : '';
   const msg = isDryRun 
-    ? `【テスト完了】${totalProcessed}件のファイルが対象です。(エラー: ${totalErrors}件)`
-    : `${totalProcessed}件のファイルを配りました。(エラー: ${totalErrors}件)`;
+    ? `【テスト完了】${totalProcessed}件のファイルが対象です。(エラー: ${totalErrors}件)${skipNote}`
+    : `${totalProcessed}件のファイルを配りました。(エラー: ${totalErrors}件)${skipNote}`;
     
-  return { success: true, message: msg };
+  return { success: true, message: msg, skipped: totalSkipped };
 }

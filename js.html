@@ -12,6 +12,8 @@
   let currentConfig = {
     folderPairs: [], // {source, target, label}
     syncFrequency: 'hourly',
+    // 自動転送のときに既存ファイルを上書きしない（既定はON）
+    autoSyncNoOverwrite: true,
     isAutoSyncEnabled: false
   };
 
@@ -113,6 +115,7 @@
       let badgeClass = 'bg-secondary';
       // テストモードのログはオレンジ色にする
       if (log.type.includes('テスト')) badgeClass = 'bg-warning text-dark';
+      else if (log.type.includes('スキップ')) badgeClass = 'bg-info text-dark';
       else if (log.type.includes('新規')) badgeClass = 'bg-success';
       else if (log.type.includes('更新')) badgeClass = 'bg-primary';
       else if (log.type.includes('エラー')) badgeClass = 'bg-danger';
@@ -135,8 +138,11 @@
     const btn = document.getElementById('btn-auto-sync');
     const statusText = document.getElementById('auto-sync-status');
     const freqSelect = document.getElementById('sync-frequency');
+    const noOverwrite = document.getElementById('auto-no-overwrite');
 
     freqSelect.value = currentConfig.syncFrequency;
+    // サーバーから返ってこなかったときは、安全なほう（上書きしない）にしておく
+    if (noOverwrite) noOverwrite.checked = currentConfig.autoSyncNoOverwrite !== false;
 
     if (currentConfig.isAutoSyncEnabled) {
       btn.className = 'btn btn-danger w-100';
@@ -176,7 +182,8 @@
     const cleanPairs = currentConfig.folderPairs.filter(p => p.source !== '' || p.target !== '');
     const configToSave = {
       folderPairs: cleanPairs,
-      syncFrequency: document.getElementById('sync-frequency').value
+      syncFrequency: document.getElementById('sync-frequency').value,
+      autoSyncNoOverwrite: document.getElementById('auto-no-overwrite').checked
     };
 
     google.script.run
@@ -194,6 +201,34 @@
         showLoading(false);
       })
       .saveAppConfig(configToSave);
+  }
+
+  /**
+   * 「自動のときは上書きしない」のチェックだけを、その場で保存する。
+   * 「設定を保存」を押し忘れたまま自動転送が回ると、意図しない上書きが起きるため。
+   */
+  function saveAutoOverwriteOption() {
+    const checked = document.getElementById('auto-no-overwrite').checked;
+    currentConfig.autoSyncNoOverwrite = checked;
+
+    google.script.run
+      .withSuccessHandler(function() {
+        Swal.fire({
+          icon: 'success',
+          title: checked ? '自動では上書きしません' : '自動でも上書きします',
+          text: checked
+            ? '自動転送では、新しいファイルを配るだけになります。'
+            : '元のファイルは消さず、_backup_日時 に名前を変えて残します。',
+          timer: 2600, showConfirmButton: false
+        });
+      })
+      .withFailureHandler(function(error) {
+        // 保存できていないのにチェックだけ変わっていると危ないので、見た目を戻す
+        currentConfig.autoSyncNoOverwrite = !checked;
+        document.getElementById('auto-no-overwrite').checked = !checked;
+        showError('設定を保存できませんでした', error);
+      })
+      .saveAppConfig({ autoSyncNoOverwrite: checked });
   }
 
   /**
@@ -247,7 +282,9 @@
         showProgressModal(false);
         showError('エラーが起きました', error);
       })
-      .runSyncProcess(isDryRun);
+      // 第2引数の true は「画面のボタンから呼んだ」という印。
+      // 時間主導トリガーはこれを渡さないので、サーバー側で手動と自動を区別できる。
+      .runSyncProcess(isDryRun, true);
   }
 
   /**
