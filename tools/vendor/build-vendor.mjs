@@ -271,6 +271,17 @@ export async function buildVendor(repoRoot, { log = console.log, warn = console.
     } else if (t.icons) {
       const pack = ICON_PACKS[t.icons];
       if (!pack) throw new Error(`知らないアイコンの出どころ: ${t.icons}`);
+      /* ⚠️ パッケージが入っていないときは、警告ではなく止める。
+         2026-08-28、CI に npm ci が無いリポジトリでこれをやったところ、
+         「SVG が見つからないアイコン: （47 個ぜんぶ）」と警告を出したうえで
+         **アイコンが 0 個の 1KB の CSS を書き出して成功した**。
+         配れば画面から絵が全部消えるのに、ビルドは緑になる。
+         1 個も見つからないのは打ち間違いではなく、取りこみ元が無いということ。 */
+      if (!fs.existsSync(path.join(nm, pack.dir))) {
+        throw new Error(
+          `${t.icons} がありません（${pack.dir}）。先に \`npm ci\`（または npm install）を実行してください。`,
+        );
+      }
       /* ⚠️ 実行時に決まるアイコン（`ms-${cond ? 'a' : 'b'}` のような書き方）は
          走査では見つからない。設定の extra に並べること。
          並べ忘れると、その場面でだけ絵が消える。 */
@@ -287,6 +298,14 @@ export async function buildVendor(repoRoot, { log = console.log, warn = console.
           return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
         },
       });
+      if (missing.length && count === 0 && names.length > 0) {
+        // 1 個も引けなかった。打ち間違いが全部に起きることは無いので、
+        // 出どころのほうが壊れている（版が違う／中身が空）。
+        throw new Error(
+          `${t.icons} から 1 個も引けませんでした（${names.length} 個ぜんぶ）。` +
+            `版が合っているか、${pack.dir} の中身を確かめてください。`,
+        );
+      }
       if (missing.length) {
         // 落とさない。名前の打ち間違いでビルドを止めると、直せる人がいないときに
         // 何も配れなくなる。ただし黙って通さない。
