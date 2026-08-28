@@ -82,10 +82,27 @@ export function readDep(nodeModules, rel) {
 export function collectIconNames(repoRoot, cfg, prefix, deps = {}) {
   const { readdir = fs.readdirSync, read = fs.readFileSync, stat = fs.statSync } = deps;
   const used = new Set();
-  const re = new RegExp(`\\b${prefix}-([a-z0-9-]+)`, 'g');
+  // ⚠️ _ を入れること。Material Symbols の名前は check_circle のように _ を使う。
+  //    入れ忘れると ms-check_circle が "check" として拾われ、**別の絵が出るか、
+  //    何も出ない**。実際に踏んだ（2026-08-28）。
+  const re = new RegExp(`\\b${prefix}-([a-z0-9_-]+)`, 'g');
   const generated = new Set(
     (cfg.targets || []).map((t) => path.resolve(repoRoot, t.out)),
   );
+  /* ⚠️ 生成物の「名前」も落とす。
+     index.html に <link href="./vendor/mdi-icons.css"> と書いてあると、
+     その文字列から `mdi-icons` というアイコンが使われていると読んでしまう。
+     ファイルを走査対象から外すだけでは足りない（読む側ではなく、
+     読まれる側に名前が出てくるため）。2026-08-28、SekigaeMaker で実測。 */
+  /* ⚠️ 拡張子まで含めた「ファイル名」で落とすこと。
+     拡張子を外した幹（"ms"）で落とすと、`class="ms ms-search"` の中の
+     ms まで消えてアイコンが 1 つも見つからなくなる。実際に踏んだ。 */
+  const generatedNames = (cfg.targets || []).map((t) => path.basename(t.out));
+  const dropNames = (text) => {
+    let out = text;
+    for (const n of generatedNames) out = out.split(n).join('');
+    return out;
+  };
   const visit = (p) => {
     if (generated.has(path.resolve(p))) return;
     let st;
@@ -108,7 +125,7 @@ export function collectIconNames(repoRoot, cfg, prefix, deps = {}) {
     } catch {
       return;
     }
-    for (const m of text.matchAll(re)) used.add(m[1]);
+    for (const m of dropNames(text).matchAll(re)) used.add(m[1]);
   };
   for (const rel of cfg.scan) visit(path.join(repoRoot, rel));
   return [...used].sort();
@@ -123,6 +140,13 @@ export function svgToDataUri(svg) {
     .trim()
     // currentColor で塗るので、SVG 側の色指定は落として統一する
     .replace(/\sfill="[^"]*"/g, '')
+    /* class / width / height も落とす。
+       マスクの大きさは CSS（1em・center/contain）が決めるので効かないうえ、
+       bootstrap-icons の SVG は class="bi bi-rulers" のように**自分の名前**を
+       持っている。それが data: URI の中に残ると、走査で「そのアイコンも
+       使われている」と読めてしまう。実際に MIRAI-Compass で
+       bi-pencil-ruler の中の bi-rulers を拾った（2026-08-28）。 */
+    .replace(/\s(?:class|width|height)="[^"]*"/g, '')
     .replace('<svg ', '<svg fill="currentColor" ');
   const esc = body
     .replace(/"/g, "'")
@@ -214,6 +238,17 @@ export const ICON_PACKS = {
     dir: '@mdi/svg/svg',
     alias: {},
   },
+  /* Material Symbols。合字で絵を出す書体としても配れるが、そちらは
+     「その字で綴れる絵ぜんぶ」が返ってくるので重い（実測 289KB）。
+     使っている分の SVG だけを取り出せば 10KB 前後で済む。
+     FILL@1 の見た目に合わせて -fill.svg を採る。 */
+  '@material-symbols/svg-400': {
+    prefix: 'ms',
+    baseClass: 'ms',
+    dir: '@material-symbols/svg-400/rounded',
+    suffix: '-fill',
+    alias: {},
+  },
 };
 
 export async function buildVendor(repoRoot, { log = console.log, warn = console.warn } = {}) {
@@ -236,12 +271,19 @@ export async function buildVendor(repoRoot, { log = console.log, warn = console.
     } else if (t.icons) {
       const pack = ICON_PACKS[t.icons];
       if (!pack) throw new Error(`知らないアイコンの出どころ: ${t.icons}`);
-      const names = collectIconNames(repoRoot, cfg, pack.prefix);
+      /* ⚠️ 実行時に決まるアイコン（`ms-${cond ? 'a' : 'b'}` のような書き方）は
+         走査では見つからない。設定の extra に並べること。
+         並べ忘れると、その場面でだけ絵が消える。 */
+      const names = [...new Set([...collectIconNames(repoRoot, cfg, pack.prefix), ...(t.extra || [])])].sort();
       const { css, count, missing } = renderIconCss(names, {
         prefix: pack.prefix,
         baseClass: pack.baseClass,
         resolve: (name) => {
-          const file = path.join(nm, pack.dir, (pack.alias[name] || name) + '.svg');
+          /* 読み替えは 2 段。出どころが持つ表（版が変わって名前が消えたもの）と、
+             リポジトリが vendor.config.json に書いた表（そのアプリの事情）。
+             後者が優先。読み替えの理由は設定のそばに書けるようにしてある。 */
+          const real = (t.alias && t.alias[name]) || pack.alias[name] || name;
+          const file = path.join(nm, pack.dir, real + (pack.suffix || '') + '.svg');
           return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
         },
       });

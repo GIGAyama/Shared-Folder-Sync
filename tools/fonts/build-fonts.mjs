@@ -47,7 +47,12 @@ export const DEFAULT_BUCKET_SIZE = 780;
 export const DEFAULT_CONFIG = {
   family: null, // 例: "Zen Maru Gothic"（families を使わないなら必須）
   weights: [400, 700],
-  families: null, // 複数の書体を使うとき: [{ family, weights }, …]
+  // 複数の書体を使うとき: [{ family, weights, text? }, …]
+  //
+  // text を書くと、その書体だけは共通の収録文字を使わず、書いた字だけを取り寄せる。
+  // アイコン書体（Material Symbols など）のためのもの。あれは合字で絵を出すので、
+  // 要るのは合字の名前に出てくる字だけであり、かなや漢字を混ぜても意味がない。
+  families: null,
   grades: [1, 2], // 学年別漢字のどこまでを入れるか
   extra: '', // 追加で必ず入れたい字
   scan: [], // 画面に出る字を拾うファイル / ディレクトリ
@@ -65,6 +70,9 @@ export const DEFAULT_CONFIG = {
   wrapStyle: null,
   slug: null, // ファイル名の頭。既定は family から作る
   license: '', // CSS の頭に書く著作権表記
+  // ⚠️ 書体ごとにライセンスが違う。Roboto は Apache-2.0 で、OFL ではない。
+  //    間違えると、書いてあるライセンスと実際のライセンスが食い違ったまま配ることになる。
+  licenseId: 'OFL-1.1',
   copyright: '', // OFL.txt の先頭に置く著作権表示（例: "Copyright 2021 The …"）
   oflPath: null, // OFL 全文の置き場。既定は outDir/OFL.txt。embed のときは必須
   generator: 'tools/fonts/build-fonts.mjs', // CSS に「作り直し方」として書く道具の場所
@@ -257,8 +265,10 @@ export async function buildFonts(repoRoot, { fetchImpl = fetch, log = console.lo
   const faces = [];
   let total = 0;
   for (const fam of cfg.families) {
+  // text を持つ書体は、共通の収録文字ではなく、書かれた字だけを使う
+  const famBuckets = fam.text ? splitBuckets([...new Set([...fam.text])].sort().join(''), cfg.bucketSize) : buckets;
   for (const weight of fam.weights) {
-    for (const [i, text] of buckets.entries()) {
+    for (const [i, text] of famBuckets.entries()) {
       const label = `${fam.family} ${weight} 束${i + 1}`;
       const cssRes = await fetchImpl(cssApiUrl(fam.family, weight, text), {
         headers: { 'User-Agent': UA },
@@ -290,7 +300,7 @@ export async function buildFonts(repoRoot, { fetchImpl = fetch, log = console.lo
   // ライセンス違反になるので、道具のほうで必ず書き出す。
   const oflPath = cfg.oflPath || path.join(cfg.embed ? '.' : cfg.outDir, 'OFL.txt');
   fs.mkdirSync(path.dirname(path.join(repoRoot, oflPath)), { recursive: true });
-  fs.writeFileSync(path.join(repoRoot, oflPath), oflText(cfg.copyright || cfg.license));
+  fs.writeFileSync(path.join(repoRoot, oflPath), oflText(cfg.copyright || cfg.license, cfg.licenseId));
 
   const css = renderCss(faces, {
     family: cfg.families.map((f) => f.family).join(' / '),
