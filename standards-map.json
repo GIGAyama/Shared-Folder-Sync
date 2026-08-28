@@ -1,4 +1,26 @@
 {
+  "files": [
+    {
+      "canonical": "fonts/build-fonts.mjs",
+      "local": "tools/fonts/build-fonts.mjs"
+    },
+    {
+      "canonical": "fonts/chars.mjs",
+      "local": "tools/fonts/chars.mjs"
+    },
+    {
+      "canonical": "fonts/ofl.mjs",
+      "local": "tools/fonts/ofl.mjs"
+    },
+    {
+      "canonical": "vendor/build-vendor.mjs",
+      "local": "tools/vendor/build-vendor.mjs"
+    },
+    {
+      "canonical": "vendor/verify-generated.mjs",
+      "local": "tools/vendor/verify-generated.mjs"
+    }
+  ],
   "dirs": [
     {
       "canonical": "skills/devlog-article",

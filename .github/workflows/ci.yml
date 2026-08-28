@@ -2,11 +2,12 @@
 # ci.yml — このリポジトリの最低限の点検
 # =====================================================================
 # Google Apps Script（code.gs）と、そこから配る HTML だけのリポジトリ。
-# ビルドもテストも持たない。それでも次の 2 つは機械で見ておきたい。
+# 次の 3 つを機械で見る。
 #
-#   1. syntax — code.gs が構文として壊れていないか。GAS は貼り付けて
-#      保存するまで誤りに気づけないので、ここで先に落とす。
-#   2. drift  — 配られたスキルが正本からずれていないか。
+#   1. syntax    — code.gs が構文として壊れていないか。GAS は貼り付けて
+#                  保存するまで誤りに気づけないので、ここで先に落とす。
+#   2. generated — 取りこんだライブラリ（vendor_*.html）が原本と一致しているか。
+#   3. drift     — 配られたスキルが正本からずれていないか。
 #
 # ⚠️ これまでこのリポジトリには検査が 1 つも無かった。
 # =====================================================================
@@ -37,6 +38,21 @@ jobs:
             node --check "/tmp/$(basename "$f").js" || fail=1
           done
           exit $fail
+
+  # 生成物（vendor_*.html）が原本と食い違っていないか。
+  # ライブラリを自己ホストにしたので、package.json や vendor.config.json を直したのに
+  # npm run build を忘れると、リポジトリの中身だけが古いまま残る。
+  # 構文検査もスキル照合も通ってしまい、貼り付けて動かすまで気づけない。
+  generated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: 取りこんだライブラリが最新か
+        run: npm run ci
 
   # 配られたスキル（.claude/skills/）が正本からずれていないか。
   # 正本は GIGAyama.github.io/standards/ にあり、そこを checkout して直に照合する。

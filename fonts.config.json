@@ -1,0 +1,14 @@
+{
+  "//": "書体の取りこみ方。作り直すには npm run build:fonts（ネットが要る）",
+  "family": "Zen Maru Gothic",
+  "weights": [500],
+  "grades": [],
+  "scan": ["index.html", "css.html", "js.html", "code.gs"],
+  "scanExt": [".html", ".gs"],
+  "embed": true,
+  "cssPath": "fonts.html",
+  "oflPath": "OFL.txt",
+  "generator": "tools/fonts/build-fonts.mjs",
+  "license": "Zen Maru Gothic 500 — SIL Open Font License 1.1（全文は OFL.txt）",
+  "copyright": "Copyright 2021 The Zen Maru Gothic Project Authors (https://github.com/googlefonts/zen-marugothic)"
+}
