@@ -1,6 +1,11 @@
 <style>
-  /* --- 1. フォント設定 (Zen Maru Gothic) --- */
-  @import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&display=swap');
+  /* --- 1. フォント設定 (Zen Maru Gothic) ---
+     書体は fonts.html（生成物）から自己ホストで読んでいます。index.html が先に
+     差しこむので、ここには @import を書きません。
+
+     ⚠️ ここに Google Fonts の @import を戻さないこと。フィルタが「握ったまま
+        返さない」形で塞ぐと、スタイルシートの読み込みが終わらず画面が出ません。
+     ⚠️ 収録は 500 の 1 ウェイトだけです。太字は端末側の擬似ボールドになります。 */
 
   :root {
     --primary-color: #1a73e8;       /* Google Blue */

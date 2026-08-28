@@ -1,0 +1,18 @@
+{
+  "name": "shared-folder-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "共有フォルダ同期くん — GAS。実行コードは 1 バイトも外から取らない",
+  "type": "module",
+  "scripts": {
+    "build": "node tools/vendor/build-vendor.mjs",
+    "build:fonts": "node tools/fonts/build-fonts.mjs",
+    "verify": "node tools/vendor/verify-generated.mjs",
+    "ci": "npm run build && npm run verify"
+  },
+  "dependencies": {
+    "bootstrap": "5.3.0",
+    "bootstrap-icons": "1.10.5",
+    "sweetalert2": "11.26.25"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "//": "ライブラリの取りこみ方。版は package.json で固定する。作り直すには npm run build",
+  "generator": "tools/vendor/build-vendor.mjs",
+  "targets": [
+    {
+      "out": "vendor_css.html",
+      "css": [
+        "bootstrap/dist/css/bootstrap.min.css"
+      ]
+    },
+    {
+      "out": "vendor_icons.html",
+      "icons": "bootstrap-icons"
+    },
+    {
+      "out": "vendor_js.html",
+      "js": [
+        "bootstrap/dist/js/bootstrap.bundle.min.js",
+        "sweetalert2/dist/sweetalert2.all.min.js"
+      ]
+    }
+  ]
+}
