@@ -19,6 +19,26 @@
     {
       "canonical": "vendor/verify-generated.mjs",
       "local": "tools/vendor/verify-generated.mjs"
+    },
+    {
+      "canonical": "agents/rules/gigaschool-standards.md",
+      "local": ".agents/rules/gigaschool-standards.md"
+    },
+    {
+      "canonical": "agents/CLAUDE.md",
+      "local": "CLAUDE.md"
+    },
+    {
+      "canonical": "agents/settings.json",
+      "local": ".claude/settings.json"
+    },
+    {
+      "canonical": "agents/hooks/guard-canonical.mjs",
+      "local": ".claude/hooks/guard-canonical.mjs"
+    },
+    {
+      "canonical": "agents/hooks/announce-checks.mjs",
+      "local": ".claude/hooks/announce-checks.mjs"
     }
   ],
   "dirs": [
