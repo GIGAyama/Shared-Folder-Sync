@@ -186,12 +186,28 @@
       </div>
     </div>
 
-    <!-- フッター -->
-    <footer class="text-center text-muted py-3 mt-4 border-top">
-      <small>© 2026 共有フォルダ同期くん <a href="https://giga-school.com" target="_blank" class="text-decoration-none text-muted">GIGA山</a></small>
+    <!--
+      フッター。クレジットと、利用規約・プライバシーへの行き先を 1 行に収める。
+      2 行になると、そのぶん本文の場所を奪う。幅が足りなくなったら切るのは
+      クレジットのほうで、行き先は必ず残す。画面からそこへ辿れるのはここだけ。
+
+      ⚠️ min-width:0 を落とさないこと。行き先は折り返さない（nowrap）ので、
+         これが無いと最小幅が段を押し広げ、狭い画面で横に溢れる。
+      中身は正本の部品が出す（giga_links.html）。
+    -->
+    <footer class="d-flex flex-nowrap align-items-center justify-content-center gap-2 text-center text-muted py-1 mt-4 border-top" style="min-width:0">
+      <small class="text-truncate" style="min-width:0">© 2026 共有フォルダ同期くん <a href="https://giga-school.com" target="_blank" class="text-decoration-none text-muted">GIGA山</a></small>
+      <span data-giga-links></span>
     </footer>
 
     <?!= HtmlService.createHtmlOutputFromFile('vendor_js').getContent(); ?>
     <?!= HtmlService.createHtmlOutputFromFile('js').getContent(); ?>
+    <!-- 利用規約・プライバシーへの行き先。中身は正本の部品
+         standards/web/giga-app-links.js（配布物 web/giga-app-links.js）を
+         tools/build-app-links.mjs が焼き込んだもの。
+         上のフッターに置いた <span data-giga-links> の中に出す。
+         slug は焼き込みのときに渡してある（GAS の画面はホスト名から
+         自分が何のアプリか分からないため）。 -->
+    <?!= HtmlService.createHtmlOutputFromFile('giga_links').getContent(); ?>
   </body>
 </html>
