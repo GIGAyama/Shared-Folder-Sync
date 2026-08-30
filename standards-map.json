@@ -21,6 +21,10 @@
       "local": "tools/vendor/verify-generated.mjs"
     },
     {
+      "canonical": "web/giga-app-links.js",
+      "local": "web/giga-app-links.js"
+    },
+    {
       "canonical": "agents/rules/gigaschool-standards.md",
       "local": ".agents/rules/gigaschool-standards.md"
     },

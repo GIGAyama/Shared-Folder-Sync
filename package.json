@@ -7,8 +7,9 @@
   "scripts": {
     "build": "node tools/vendor/build-vendor.mjs",
     "build:fonts": "node tools/fonts/build-fonts.mjs",
-    "verify": "node tools/vendor/verify-generated.mjs",
-    "ci": "npm run build && npm run verify"
+    "verify": "node tools/build-app-links.mjs --check && node tools/vendor/verify-generated.mjs",
+    "ci": "npm run build && npm run verify",
+    "build:app-links": "node tools/build-app-links.mjs"
   },
   "dependencies": {
     "bootstrap": "5.3.0",
