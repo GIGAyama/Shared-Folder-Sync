@@ -94,6 +94,21 @@
  *
  * 並び順は、書いた順ではなく下の LINKS の順になる。
  *
+ * ── 暗い画面のアプリ ─────────────────────────────────
+ *
+ * 既定は端末の設定（prefers-color-scheme）に従う。それで足りるのは、
+ * アプリの地の色も端末の設定に従っているときだけ。
+ *
+ *   <span data-giga-links data-theme="dark"></span>
+ *   window.GIGA_APP_LINKS = { theme: 'dark' };
+ *
+ * ⚠️ 端末の設定が light でも地が暗いアプリがある（しりとりファイターは
+ *    <meta name="color-scheme" content="light"> を宣言したうえで
+ *    #170f33 を塗っている）。そこで既定のまま置くと、暗い地に暗い字が
+ *    載って**リンクがあることに気づけない**。Shadow DOM なのでアプリ側の
+ *    CSS は届かず、アプリの側では直せない。地が固定のアプリは
+ *    theme を明示すること。'light' も同じように書ける。
+ *
  * 置き場所が無ければ、画面のいちばん下に控えめな行として出す。
  * **フッターを持たないアプリでも行き先ができる**ようにするため。
  * 「フッターに足して」と場所で頼んだせいで 9 本が取り残された、という
@@ -215,6 +230,9 @@
     return {
       slug: conf.slug || data.slug || slot.slug || '',
       links: conf.links || data.links || slot.links || '',
+      /* 'dark' / 'light' を明示したときだけ、端末の設定より優先する。
+         書かなければ prefers-color-scheme に従う（既定）。 */
+      theme: conf.theme || data.theme || slot.theme || '',
       hostname: window.location && window.location.hostname
     };
   }
@@ -260,9 +278,21 @@
     /* 絵だけになると、文字が添えられていたときより読み取りにくい。少し大きくする。 */
     'svg{inline-size:18px;block-size:18px}}',
     /* 暗い画面の端末でも読めるようにする。アプリ側の指定は Shadow DOM で
-       届かないので、こちらで両方を持つ */
+       届かないので、こちらで両方を持つ。
+       ⚠️ :host(.giga-app-links--light) を外さないこと。地の色が固定で明るい
+          アプリが theme="light" と書いたとき、端末の設定が dark だと
+          明るい地に明るい字が載る。 */
     '@media (prefers-color-scheme: dark){',
-    'a{color:#c3ccdd}a:hover{background:rgba(150,190,255,.16);color:#eaf1ff}}',
+    ':host(:not(.giga-app-links--light)) a{color:#c3ccdd}',
+    ':host(:not(.giga-app-links--light)) a:hover{background:rgba(150,190,255,.16);color:#eaf1ff}}',
+    /* theme を明示したときは、端末の設定より優先する。
+       :host(.…) a のほうが、上の a{} より詳しいので後ろに書かなくても勝つが、
+       読む順で分かるように、こちらも後ろへ置いてある。 */
+    ':host(.giga-app-links--dark) a{color:#c3ccdd}',
+    ':host(.giga-app-links--dark) a:hover{background:rgba(150,190,255,.16);color:#eaf1ff}',
+    ':host(.giga-app-links--dark) a:focus-visible{outline-color:#8ab4f8}',
+    ':host(.giga-app-links--light) a{color:#42506b}',
+    ':host(.giga-app-links--light) a:hover{background:rgba(26,115,232,.10);color:#1a4fa8}',
     '@media (prefers-reduced-motion: reduce){a{transition:none}}',
     /* 紙にはリンクを写しても押せない。当たり判定は要らないが、文字は戻す
        （絵だけが並んだ紙は、あとから読んで何のことか分からない）。 */
@@ -294,10 +324,14 @@
     return svg;
   }
 
-  function build(items) {
+  function build(items, theme) {
     var host = document.createElement(TAG);
     var root = host.attachShadow ? host.attachShadow({ mode: 'open' }) : null;
     if (!root) return null;                       // Shadow DOM が無い環境では出さない
+
+    /* 地の色が端末の設定に従わないアプリだけが書く。書かなければ
+       prefers-color-scheme のまま（既定）。知らない値は既定に落とす。 */
+    if (theme === 'dark' || theme === 'light') host.className = 'giga-app-links--' + theme;
 
     /* ⚠️ <style> を入れるだけにしない。
        CSP が `style-src 'self'`（'unsafe-inline' なし）の画面では、Shadow DOM の
@@ -358,8 +392,9 @@
 
        ⚠️ ここで host.style.margin と書かない。style 属性も CSP の style-src が
           見ているので、`style-src 'self'` の画面では黙って効かない。
-          余白は上の STYLE の :host(.giga-app-links--end) で付ける。 */
-    host.className = 'giga-app-links--end';
+          余白は上の STYLE の :host(.giga-app-links--end) で付ける。
+       ⚠️ className へ代入し直さないこと。theme で付けた色の指定を消してしまう。 */
+    host.classList.add('giga-app-links--end');
     document.body.appendChild(host);
   }
 
@@ -378,9 +413,10 @@
 
   /** 出す（すでに出ていれば、出しなおして置き場所へ移す）。 */
   function paint() {
-    var got = resolve(settings());
+    var conf = settings();
+    var got = resolve(conf);
     if (!got.items.length) return;                // slug が分からない。何も出さない
-    var host = build(got.items);
+    var host = build(got.items, conf.theme);
     if (!host) return;
     if (shown && shown.parentNode) shown.parentNode.removeChild(shown);
     shown = host;
